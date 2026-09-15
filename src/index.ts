@@ -43,6 +43,50 @@ async function fetchTiingo(symbols: string[], env: Env) {
   return data.map(cleanQuote);
 }
 
+function cleanBar(d: any) {
+  return {
+    date: String(d.date).slice(0, 10),
+    open: d.open,
+    high: d.high,
+    low: d.low,
+    close: d.close,
+    volume: d.volume,
+    adjClose: d.adjClose,
+  };
+}
+
+async function fetchTiingoHistory(
+  symbol: string,
+  startDate: string,
+  endDate: string | undefined,
+  frequency: string,
+  env: Env
+) {
+  const params = new URLSearchParams({
+    startDate,
+    ...(endDate ? { endDate } : {}),
+    resampleFreq: frequency,
+  });
+
+  const response = await fetch(
+    `https://api.tiingo.com/tiingo/daily/${encodeURIComponent(
+      symbol.trim().toUpperCase()
+    )}/prices?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Token ${env.TIINGO_API_TOKEN}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Tiingo history request failed: ${response.status}`);
+  }
+
+  const data: any[] = await response.json();
+  return data.map(cleanBar);
+}
+
 function createServer(env: Env) {
   const server = new McpServer({
     name: "Wayne Tiingo Quote Server",
@@ -91,6 +135,45 @@ function createServer(env: Env) {
             text: JSON.stringify({
               count: quotes.length,
               quotes,
+            }),
+          },
+        ],
+      };
+    }
+  );
+
+  server.registerTool(
+    "get_history",
+    {
+      description: "Get historical daily prices for a US stock or ETF",
+      inputSchema: {
+        symbol: z.string(),
+        startDate: z.string().describe("YYYY-MM-DD"),
+        endDate: z.string().describe("YYYY-MM-DD, defaults to today").optional(),
+        frequency: z
+          .enum(["daily", "weekly", "monthly"])
+          .default("daily")
+          .optional(),
+      },
+    },
+    async ({ symbol, startDate, endDate, frequency }) => {
+      const bars = await fetchTiingoHistory(
+        symbol,
+        startDate,
+        endDate,
+        frequency ?? "daily",
+        env
+      );
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              symbol: symbol.trim().toUpperCase(),
+              source: "tiingo",
+              frequency: frequency ?? "daily",
+              bars,
             }),
           },
         ],
